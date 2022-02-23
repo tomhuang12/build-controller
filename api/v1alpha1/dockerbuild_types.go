@@ -27,6 +27,7 @@ import (
 const (
 	GitRepositoryIndexKey     = ".metadata.gitRepository"
 	MaxConditionMessageLength = 20000
+	TagStrategyCommitSha      = "commitSha"
 )
 
 // DockerBuildSpec defines the desired state of DockerBuild
@@ -45,6 +46,11 @@ type DockerBuildSpec struct {
 	// and the CUE instance built.
 	// +required
 	SourceRef CrossNamespaceSourceReference `json:"sourceRef"`
+
+	// Path to the directory containing the Dockerfile.
+	// Defaults to 'None', which translates to the root path of the SourceRef.
+	// +optional
+	Path string `json:"path,omitempty"`
 
 	// The spec of a container registry that the image should be pushed to
 	// after build is successful.
@@ -117,6 +123,12 @@ func DockerBuildNotReady(k DockerBuild, revision, reason, message string) Docker
 	if revision != "" {
 		k.Status.LastAttemptedRevision = revision
 	}
+	return k
+}
+
+func DockerBuildReady(k DockerBuild, revision, reason, message string) DockerBuild {
+	SetDockerBuildReadiness(&k, metav1.ConditionTrue, reason, trimString(message, MaxConditionMessageLength), revision)
+	k.Status.LastAppliedRevision = revision
 	return k
 }
 

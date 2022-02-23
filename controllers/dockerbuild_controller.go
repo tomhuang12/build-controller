@@ -17,8 +17,18 @@ limitations under the License.
 package controllers
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"crypto/sha1"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -32,15 +42,22 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
+	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/fluxcd/pkg/apis/meta"
 	"github.com/fluxcd/pkg/runtime/acl"
 	"github.com/fluxcd/pkg/runtime/metrics"
 	"github.com/fluxcd/pkg/runtime/predicates"
+	"github.com/fluxcd/pkg/untar"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1beta1"
+	"github.com/hashicorp/go-retryablehttp"
 	buildv1alpha1 "github.com/tomhuang12/build-controller/api/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	dockertypes "github.com/docker/docker/api/types"
+	dockerclient "github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/archive"
 )
 
 // DockerBuildReconciler reconciles a DockerBuild object
@@ -49,6 +66,15 @@ type DockerBuildReconciler struct {
 	Scheme               *runtime.Scheme
 	MetricsRecorder      *metrics.Recorder
 	NoCrossNamespaceRefs bool
+	httpClient           *retryablehttp.Client
+	ControllerName       string
+}
+
+// DockerBuildReconcilerOptions options
+type DockerBuildReconcilerOptions struct {
+	MaxConcurrentReconciles   int
+	HTTPRetry                 int
+	DependencyRequeueInterval time.Duration
 }
 
 //+kubebuilder:rbac:groups=build.contrib.flux.io,resources=dockerbuilds,verbs=get;list;watch;create;update;patch;delete
@@ -150,7 +176,147 @@ func (r *DockerBuildReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 }
 
 func (r *DockerBuildReconciler) reconcile(ctx context.Context, dockerBuild buildv1alpha1.DockerBuild, source sourcev1.Source) (buildv1alpha1.DockerBuild, error) {
-	return dockerBuild, nil
+	if v, ok := meta.ReconcileAnnotationValue(dockerBuild.GetAnnotations()); ok {
+		dockerBuild.Status.SetLastHandledReconcileRequest(v)
+	}
+
+	revision := source.GetArtifact().Revision
+
+	// create tmp dir
+	tmpDir, err := os.MkdirTemp("", dockerBuild.Name)
+	if err != nil {
+		err = fmt.Errorf("tmp dir error: %w", err)
+		return buildv1alpha1.DockerBuildNotReady(
+			dockerBuild,
+			revision,
+			sourcev1.StorageOperationFailedReason,
+			err.Error(),
+		), err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// download artifact and extract files
+	err = r.download(source.GetArtifact(), tmpDir)
+	if err != nil {
+		return buildv1alpha1.DockerBuildNotReady(
+			dockerBuild,
+			revision,
+			buildv1alpha1.ArtifactFailedReason,
+			err.Error(),
+		), err
+	}
+
+	// check build path exists
+	dirPath, err := securejoin.SecureJoin(tmpDir, dockerBuild.Spec.Path)
+	if err != nil {
+		return buildv1alpha1.DockerBuildNotReady(
+			dockerBuild,
+			revision,
+			buildv1alpha1.ArtifactFailedReason,
+			err.Error(),
+		), err
+	}
+	if _, err := os.Stat(dirPath); err != nil {
+		err = fmt.Errorf("dockerBuild path not found: %w", err)
+		return buildv1alpha1.DockerBuildNotReady(
+			dockerBuild,
+			revision,
+			buildv1alpha1.ArtifactFailedReason,
+			err.Error(),
+		), err
+	}
+
+	// build the docker image
+	err = r.build(ctx, revision, dirPath, &dockerBuild)
+	if err != nil {
+		return buildv1alpha1.DockerBuildNotReady(
+			dockerBuild,
+			revision,
+			buildv1alpha1.BuildFailedReason,
+			err.Error(),
+		), err
+	}
+
+	return buildv1alpha1.DockerBuildReady(
+		dockerBuild,
+		revision,
+		meta.ReconciliationSucceededReason,
+		fmt.Sprintf("Applied revision: %s", revision),
+	), err
+}
+
+func (r *DockerBuildReconciler) build(ctx context.Context, revision, dir string, dockerBuild *buildv1alpha1.DockerBuild) error {
+	cli, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv)
+	if err != nil {
+		panic(err)
+	}
+
+	dockerCtx, cancel := context.WithTimeout(context.Background(), time.Second*120)
+	defer cancel()
+
+	tar, err := archive.TarWithOptions(dir, &archive.TarOptions{})
+	if err != nil {
+		return err
+	}
+
+	imageTag, err := getImageTag(*dockerBuild, revision)
+	if err != nil {
+		return err
+	}
+
+	opts := dockertypes.ImageBuildOptions{
+		Dockerfile: "Dockerfile",
+		Tags:       []string{imageTag},
+		Remove:     true,
+	}
+	res, err := cli.ImageBuild(dockerCtx, tar, opts)
+	if err != nil {
+		return err
+	}
+
+	defer res.Body.Close()
+
+	err = logDockerResponse(ctx, res.Body)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func logDockerResponse(ctx context.Context, rb io.Reader) error {
+	var lastLine string
+	log := ctrl.LoggerFrom(ctx)
+
+	scanner := bufio.NewScanner(rb)
+	for scanner.Scan() {
+		lastLine = scanner.Text()
+		log.Info(scanner.Text())
+	}
+
+	errLine := &buildv1alpha1.ErrorLine{}
+	json.Unmarshal([]byte(lastLine), errLine)
+	if errLine.Error != "" {
+		return errors.New(errLine.Error)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func getImageTag(dockerBuild buildv1alpha1.DockerBuild, revision string) (string, error) {
+	switch dockerBuild.Spec.ContainerRegistry.TagStrategy {
+	case buildv1alpha1.TagStrategyCommitSha:
+		if len(revision) > 7 {
+			return dockerBuild.Spec.ContainerRegistry.Repository + revision[0:8], nil
+		} else {
+			return dockerBuild.Spec.ContainerRegistry.Repository + revision, nil
+		}
+	}
+	return "", fmt.Errorf("invalid tag strategy")
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -158,6 +324,15 @@ func (r *DockerBuildReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	const (
 		gitRepositoryIndexKey string = ".metadata.gitRepository"
 	)
+
+	// Configure the retryable http client used for fetching artifacts.
+	// By default it retries 10 times within a 3.5 minutes window.
+	httpClient := retryablehttp.NewClient()
+	httpClient.RetryWaitMin = 5 * time.Second
+	httpClient.RetryWaitMax = 30 * time.Second
+	httpClient.RetryMax = 5
+	httpClient.Logger = nil
+	r.httpClient = httpClient
 
 	// Index the DockerBuild by the GitRepository references they (may) point at.
 	if err := mgr.GetCache().IndexField(context.TODO(), &buildv1alpha1.DockerBuild{}, gitRepositoryIndexKey,
@@ -298,4 +473,68 @@ func (r *DockerBuildReconciler) patchStatus(ctx context.Context, req ctrl.Reques
 	dockerBuild.Status = newStatus
 
 	return r.Status().Patch(ctx, &dockerBuild, patch)
+}
+
+func (r *DockerBuildReconciler) download(artifact *sourcev1.Artifact, tmpDir string) error {
+	artifactURL := artifact.URL
+	if hostname := os.Getenv("SOURCE_CONTROLLER_LOCALHOST"); hostname != "" {
+		u, err := url.Parse(artifactURL)
+		if err != nil {
+			return err
+		}
+		u.Host = hostname
+		artifactURL = u.String()
+	}
+
+	req, err := retryablehttp.NewRequest(http.MethodGet, artifactURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create a new request: %w", err)
+	}
+
+	resp, err := r.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to download artifact, error: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// check response
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to download artifact from %s, status: %s", artifactURL, resp.Status)
+	}
+
+	var buf bytes.Buffer
+
+	// verify checksum matches origin
+	if err := r.verifyArtifact(artifact, &buf, resp.Body); err != nil {
+		return err
+	}
+
+	// extract
+	if _, err = untar.Untar(&buf, tmpDir); err != nil {
+		return fmt.Errorf("failed to untar artifact, error: %w", err)
+	}
+
+	return nil
+}
+
+func (r *DockerBuildReconciler) verifyArtifact(artifact *sourcev1.Artifact, buf *bytes.Buffer, reader io.Reader) error {
+	hasher := sha256.New()
+
+	// for backwards compatibility with source-controller v0.17.2 and older
+	if len(artifact.Checksum) == 40 {
+		hasher = sha1.New()
+	}
+
+	// compute checksum
+	mw := io.MultiWriter(hasher, buf)
+	if _, err := io.Copy(mw, reader); err != nil {
+		return err
+	}
+
+	if checksum := fmt.Sprintf("%x", hasher.Sum(nil)); checksum != artifact.Checksum {
+		return fmt.Errorf("failed to verify artifact: computed checksum '%s' doesn't match advertised '%s'",
+			checksum, artifact.Checksum)
+	}
+
+	return nil
 }

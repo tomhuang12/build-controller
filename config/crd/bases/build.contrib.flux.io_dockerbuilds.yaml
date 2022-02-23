@@ -71,6 +71,10 @@ spec:
               interval:
                 description: The interval at which the instance will be reconciled.
                 type: string
+              path:
+                description: Path to the directory containing the Dockerfile. Defaults
+                  to 'None', which translates to the root path of the SourceRef.
+                type: string
               retryInterval:
                 description: The interval at which to retry a previously failed reconciliation.
                   When not specified, the controller uses the CueInstanceSpec.Interval
