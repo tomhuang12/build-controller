@@ -1,0 +1,16 @@
+domain: contrib.flux.io
+layout:
+- go.kubebuilder.io/v3
+projectName: build-controller
+repo: github.com/tomhuang12/build-controller
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: contrib.flux.io
+  group: build
+  kind: DockerBuild
+  path: github.com/tomhuang12/build-controller/api/v1alpha1
+  version: v1alpha1
+version: "3"

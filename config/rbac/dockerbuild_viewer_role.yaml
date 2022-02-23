@@ -1,0 +1,20 @@
+# permissions for end users to view dockerbuilds.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: dockerbuild-viewer-role
+rules:
+- apiGroups:
+  - build.contrib.flux.io
+  resources:
+  - dockerbuilds
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - build.contrib.flux.io
+  resources:
+  - dockerbuilds/status
+  verbs:
+  - get
