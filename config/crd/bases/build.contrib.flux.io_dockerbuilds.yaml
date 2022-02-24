@@ -58,11 +58,11 @@ spec:
                     type: string
                   tagStrategy:
                     description: The image tagging strategy to use when the image
-                      is pushed to the repository. The only option is 'commitSha'.
-                      'commitSha' uses the first 7 characters of the source commit
+                      is pushed to the repository. The only option is 'commitSHA'.
+                      'commitSHA' uses the first 7 characters of the source commit
                       revision sha to tag the image with.
                     enum:
-                    - commitSha
+                    - commitSHA
                     type: string
                 required:
                 - repository

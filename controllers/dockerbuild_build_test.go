@@ -54,7 +54,7 @@ func TestDockerBuildReconciler_BuildInstance(t *testing.T) {
 			},
 			ContainerRegistry: buildv1alpha1.ContainerRegistry{
 				Repository:  repo,
-				TagStrategy: buildv1alpha1.TagStrategyCommitSha,
+				TagStrategy: buildv1alpha1.TagStrategyCommitSHA,
 			},
 		},
 	}

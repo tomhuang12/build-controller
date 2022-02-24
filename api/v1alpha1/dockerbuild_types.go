@@ -27,7 +27,7 @@ import (
 const (
 	GitRepositoryIndexKey     = ".metadata.gitRepository"
 	MaxConditionMessageLength = 20000
-	TagStrategyCommitSha      = "commitSha"
+	TagStrategyCommitSHA      = "commitSHA"
 )
 
 // DockerBuildSpec defines the desired state of DockerBuild
@@ -86,10 +86,10 @@ type ContainerRegistry struct {
 	Repository string `json:"repository"`
 
 	// The image tagging strategy to use when the image
-	// is pushed to the repository. The only option is 'commitSha'.
-	// 'commitSha' uses the first 7 characters of the source commit
+	// is pushed to the repository. The only option is 'commitSHA'.
+	// 'commitSHA' uses the first 7 characters of the source commit
 	// revision sha to tag the image with.
-	// +kubebuilder:validation:Enum=commitSha
+	// +kubebuilder:validation:Enum=commitSHA
 	// +required
 	TagStrategy string `json:"tagStrategy"`
 

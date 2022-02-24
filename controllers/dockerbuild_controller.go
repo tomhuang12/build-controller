@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -226,8 +227,18 @@ func (r *DockerBuildReconciler) reconcile(ctx context.Context, dockerBuild build
 		), err
 	}
 
+	cli, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv)
+	if err != nil {
+		return buildv1alpha1.DockerBuildNotReady(
+			dockerBuild,
+			revision,
+			buildv1alpha1.BuildFailedReason,
+			err.Error(),
+		), err
+	}
+
 	// build the docker image
-	err = r.build(ctx, revision, dirPath, &dockerBuild)
+	err = r.build(ctx, cli, revision, dirPath, &dockerBuild)
 	if err != nil {
 		return buildv1alpha1.DockerBuildNotReady(
 			dockerBuild,
@@ -245,12 +256,7 @@ func (r *DockerBuildReconciler) reconcile(ctx context.Context, dockerBuild build
 	), err
 }
 
-func (r *DockerBuildReconciler) build(ctx context.Context, revision, dir string, dockerBuild *buildv1alpha1.DockerBuild) error {
-	cli, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv)
-	if err != nil {
-		panic(err)
-	}
-
+func (r *DockerBuildReconciler) build(ctx context.Context, cli *dockerclient.Client, revision, dir string, dockerBuild *buildv1alpha1.DockerBuild) error {
 	dockerCtx, cancel := context.WithTimeout(context.Background(), time.Second*120)
 	defer cancel()
 
@@ -308,12 +314,19 @@ func logDockerResponse(ctx context.Context, rb io.Reader) error {
 }
 
 func getImageTag(dockerBuild buildv1alpha1.DockerBuild, revision string) (string, error) {
+	// drop any non-alphanumeric characters
+	reg, err := regexp.Compile("[^a-zA-Z0-9]+")
+	if err != nil {
+		return "", err
+	}
+	newRevision := reg.ReplaceAllString(revision, "")
+
 	switch dockerBuild.Spec.ContainerRegistry.TagStrategy {
-	case buildv1alpha1.TagStrategyCommitSha:
+	case buildv1alpha1.TagStrategyCommitSHA:
 		if len(revision) > 7 {
-			return dockerBuild.Spec.ContainerRegistry.Repository + revision[0:8], nil
+			return fmt.Sprintf("%s:%s", dockerBuild.Spec.ContainerRegistry.Repository, newRevision[0:8]), nil
 		} else {
-			return dockerBuild.Spec.ContainerRegistry.Repository + revision, nil
+			return fmt.Sprintf("%s:%s", dockerBuild.Spec.ContainerRegistry.Repository, newRevision), nil
 		}
 	}
 	return "", fmt.Errorf("invalid tag strategy")

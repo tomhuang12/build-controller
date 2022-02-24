@@ -25,4 +25,8 @@ const (
 	// BuildFailedReason represents the fact that the
 	// docker build failed.
 	BuildFailedReason string = "BuildFailed"
+
+	// PushFailedReason represents the fact that the
+	// docker push failed.
+	PushFailedReason string = "PushFailed"
 )
