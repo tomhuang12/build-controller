@@ -13,7 +13,11 @@ controllers installed in your cluster. Visit [https://fluxcd.io/docs/get-started
 
 TODO
 
-### Usage
+### Quick Start
+#### Create a dockerhub repository
+
+Create a dockerhub repository `podinfo` using your dockerhub account
+
 #### Define a Git repository source
 
 Create a source object that points to a Git repository containing application and a `Dockerfile`:
@@ -29,6 +33,30 @@ spec:
   url: https://github.com/stefanprodan/podinfo.git
   ref:
     branch: main
+```
+
+#### Create a Docker Hub authentication secret
+
+Create a docker hub authentication secret containing your dockerhub username, password or access token, and dockerhub server address.
+
+```bash
+kubectl create secret generic dockerAuthConfig \
+--from-literal=Username=username \
+--from-literal=Password=password \
+--from-literal=ServerAddress="https://index.docker.io/v1/"
+```
+
+Output:
+```yaml
+apiVersion: v1
+data:
+  Password: cGFzc3dvcmQ=
+  ServerAddress: aHR0cHM6Ly9pbmRleC5kb2NrZXIuaW8vdjEv
+  Username: dXNlcm5hbWU=
+kind: Secret
+metadata:
+  name: dockerAuthConfig
+  namespace: default
 ```
 
 #### Define a DockerBuild
@@ -47,6 +75,9 @@ spec:
     kind: GitRepository
     name: podinfo
   containerRegistry:
-    repository: tomhuang12/podinfo
-    tagStrategy: commitSha
+    repository: <username>/podinfo
+    tagStrategy: commitSHA
+    authConfigRef:
+      name: dockerAuthConfig
+      namespace: default
 ```

@@ -93,9 +93,15 @@ type ContainerRegistry struct {
 	// +required
 	TagStrategy string `json:"tagStrategy"`
 
-	// The credentials to use when pushing to the image repository.
-	// +optional
-	CredentialSecretRef *corev1.SecretReference `json:"credentialSecretRef,omitempty"`
+	// A reference to a secret that contains the authentication configuration
+	// to use to authenticate with the container registry.
+	// The secret should contain 'Username', 'Password', and 'ServerAddress'.
+	// (e.g. kubectl create secret generic dockerAuthConfig
+	// --from-literal=Username="dockerhub-username"
+	// --from-literal=Password="dockerhub-password"
+	// --from-literal=ServerAddress="https://index.docker.io/v1/")
+	// +required
+	AuthConfigRef *corev1.SecretReference `json:"authConfigRef"`
 }
 
 // GetRetryInterval returns the retry interval

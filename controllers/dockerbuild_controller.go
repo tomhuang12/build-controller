@@ -257,9 +257,6 @@ func (r *DockerBuildReconciler) reconcile(ctx context.Context, dockerBuild build
 }
 
 func (r *DockerBuildReconciler) build(ctx context.Context, cli *dockerclient.Client, revision, dir string, dockerBuild *buildv1alpha1.DockerBuild) error {
-	dockerCtx, cancel := context.WithTimeout(context.Background(), time.Second*120)
-	defer cancel()
-
 	tar, err := archive.TarWithOptions(dir, &archive.TarOptions{})
 	if err != nil {
 		return err
@@ -275,7 +272,7 @@ func (r *DockerBuildReconciler) build(ctx context.Context, cli *dockerclient.Cli
 		Tags:       []string{imageTag},
 		Remove:     true,
 	}
-	res, err := cli.ImageBuild(dockerCtx, tar, opts)
+	res, err := cli.ImageBuild(ctx, tar, opts)
 	if err != nil {
 		return err
 	}
@@ -287,6 +284,10 @@ func (r *DockerBuildReconciler) build(ctx context.Context, cli *dockerclient.Cli
 		return err
 	}
 
+	return nil
+}
+
+func (r *DockerBuildReconciler) push(ctx context.Context, cli *dockerclient.Client, revision string, dockerBuild *buildv1alpha1.DockerBuild) error {
 	return nil
 }
 
@@ -323,7 +324,7 @@ func getImageTag(dockerBuild buildv1alpha1.DockerBuild, revision string) (string
 
 	switch dockerBuild.Spec.ContainerRegistry.TagStrategy {
 	case buildv1alpha1.TagStrategyCommitSHA:
-		if len(revision) > 7 {
+		if len(newRevision) > 7 {
 			return fmt.Sprintf("%s:%s", dockerBuild.Spec.ContainerRegistry.Repository, newRevision[0:8]), nil
 		} else {
 			return fmt.Sprintf("%s:%s", dockerBuild.Spec.ContainerRegistry.Repository, newRevision), nil
