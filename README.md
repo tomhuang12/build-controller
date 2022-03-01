@@ -11,11 +11,7 @@ controllers installed in your cluster. Visit [https://fluxcd.io/docs/get-started
 
 ### Installation
 
-{% note %}
-
-**Note:** Running the controller locally requires docker to be running.
-
-{% endnote %}
+**NOTE:** Running the controller locally requires docker to be running.
 
 Install flux on your test cluster:
 
