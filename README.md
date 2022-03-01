@@ -11,7 +11,30 @@ controllers installed in your cluster. Visit [https://fluxcd.io/docs/get-started
 
 ### Installation
 
-TODO
+Install flux on your test cluster:
+
+```bash
+flux install
+```
+
+Port forward to source-controller artifacts server:
+
+```bash
+kubectl -n flux-system port-forward svc/source-controller 8080:80
+```
+
+Export the local address as `SOURCE_CONTROLLER_LOCALHOST`:
+
+```bash
+export SOURCE_CONTROLLER_LOCALHOST=localhost:8080
+```
+
+Have docker runtime up and running on your machine.
+
+```
+make install
+make run
+```
 
 ### Quick Start
 #### Create a dockerhub repository
@@ -26,11 +49,11 @@ Create a source object that points to a Git repository containing application an
 apiVersion: source.toolkit.fluxcd.io/v1beta1
 kind: GitRepository
 metadata:
-  name: podinfo
+  name: example
   namespace: default
 spec:
   interval: 5m
-  url: https://github.com/stefanprodan/podinfo.git
+  url: https://github.com/tomhuang12/build-controller-example
   ref:
     branch: main
 ```
@@ -40,7 +63,7 @@ spec:
 Create a docker hub authentication secret containing your dockerhub username, password or access token, and dockerhub server address.
 
 ```bash
-kubectl create secret generic dockerAuthConfig \
+kubectl create secret generic docker-auth-config \
 --from-literal=Username=username \
 --from-literal=Password=password \
 --from-literal=ServerAddress="https://index.docker.io/v1/"
@@ -55,7 +78,7 @@ data:
   Username: dXNlcm5hbWU=
 kind: Secret
 metadata:
-  name: dockerAuthConfig
+  name: docker-auth-config
   namespace: default
 ```
 
@@ -67,17 +90,26 @@ Create a `DockerBuild` resource that references the `GitRepository` source previ
 apiVersion: build.contrib.flux.io/v1alpha1
 kind: DockerBuild
 metadata:
-  name: podinfo
+  name: example
   namespace: default
 spec:
   interval: 5m
+  buildMode: buildPush
   sourceRef:
     kind: GitRepository
-    name: podinfo
+    name: example
   containerRegistry:
-    repository: <username>/podinfo
+    repository: <username>/build-controller-example
     tagStrategy: commitSHA
     authConfigRef:
-      name: dockerAuthConfig
+      name: docker-auth-config
       namespace: default
+```
+
+### Development
+
+`make test` requires `DOCKERBUILD_USERNAME`, `DOCKERBUILD_PASSWORD`, `DOCKERBUILD_SERVER` to be set as environment variables to actually perform `docker push` to a registry that exists.
+
+```
+make DOCKERBUILD_USERNAME="<your-username>" DOCKERBUILD_PASSWORD="<your-token>" DOCKERBUILD_SERVER="<docker-server-address>" test
 ```

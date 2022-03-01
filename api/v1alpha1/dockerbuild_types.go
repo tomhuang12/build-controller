@@ -28,6 +28,8 @@ const (
 	GitRepositoryIndexKey     = ".metadata.gitRepository"
 	MaxConditionMessageLength = 20000
 	TagStrategyCommitSHA      = "commitSHA"
+	BuildModeBuildOnly        = "buildOnly"
+	BuildModeBuildPush        = "buildPush"
 )
 
 // DockerBuildSpec defines the desired state of DockerBuild
@@ -56,6 +58,15 @@ type DockerBuildSpec struct {
 	// after build is successful.
 	// +required
 	ContainerRegistry ContainerRegistry `json:"containerRegistry"`
+
+	// The image build strategy to use. Options are 'buildOnly' and 'buildPush'.
+	// 'buildOnly' mode performs docker build and outputs the build
+	// logs in the controller logs.
+	// 'buildPush' mode performs docker build and then docker push to the
+	// specified container registry using the authentication configuration.
+	// +kubebuilder:validation:Enum=buildOnly;buildPush
+	// +required
+	BuildMode string `json:"buildMode"`
 }
 
 // DockerBuildStatus defines the observed state of DockerBuild
@@ -87,21 +98,22 @@ type ContainerRegistry struct {
 
 	// The image tagging strategy to use when the image
 	// is pushed to the repository. The only option is 'commitSHA'.
-	// 'commitSHA' uses the first 7 characters of the source commit
+	// 'commitSHA' uses the first 14 characters of the source commit
 	// revision sha to tag the image with.
 	// +kubebuilder:validation:Enum=commitSHA
 	// +required
 	TagStrategy string `json:"tagStrategy"`
 
 	// A reference to a secret that contains the authentication configuration
-	// to use to authenticate with the container registry.
+	// to use to authenticate with the container registry. Required when
+	// .spec.buildMode is 'buildPush'.
 	// The secret should contain 'Username', 'Password', and 'ServerAddress'.
 	// (e.g. kubectl create secret generic dockerAuthConfig
 	// --from-literal=Username="dockerhub-username"
 	// --from-literal=Password="dockerhub-password"
 	// --from-literal=ServerAddress="https://index.docker.io/v1/")
-	// +required
-	AuthConfigRef *corev1.SecretReference `json:"authConfigRef"`
+	// +optional
+	AuthConfigRef *corev1.SecretReference `json:"authConfigRef,omitempty"`
 }
 
 // GetRetryInterval returns the retry interval

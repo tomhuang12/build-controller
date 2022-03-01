@@ -1,0 +1,28 @@
+apiVersion: source.toolkit.fluxcd.io/v1beta1
+kind: GitRepository
+metadata:
+  name: example
+  namespace: default
+spec:
+  interval: 5m
+  url: https://github.com/tomhuang12/build-controller-example
+  ref:
+    branch: main
+---
+apiVersion: build.contrib.flux.io/v1alpha1
+kind: DockerBuild
+metadata:
+  name: example
+  namespace: default
+spec:
+  interval: 5m
+  buildMode: buildPush
+  sourceRef:
+    kind: GitRepository
+    name: example
+  containerRegistry:
+    repository: tomhuang12/build-controller-example
+    tagStrategy: commitSHA
+    authConfigRef:
+      name: docker-auth-config
+      namespace: default

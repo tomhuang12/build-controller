@@ -1,6 +1,0 @@
-apiVersion: build.contrib.flux.io/v1alpha1
-kind: DockerBuild
-metadata:
-  name: dockerbuild-sample
-spec:
-  # TODO(user): Add fields here

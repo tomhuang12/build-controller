@@ -30,7 +30,11 @@ spec:
       - command:
         - /manager
         args:
-        - --leader-elect
+        - --watch-all-namespaces
+        - --log-level=info
+        - --log-encoding=json
+        - --enable-leader-election
+        - --concurrent=1
         image: controller:latest
         name: manager
         securityContext:

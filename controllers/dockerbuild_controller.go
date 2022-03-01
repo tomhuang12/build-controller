@@ -22,6 +22,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,6 +53,7 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1beta1"
 	"github.com/hashicorp/go-retryablehttp"
 	buildv1alpha1 "github.com/tomhuang12/build-controller/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -183,6 +185,11 @@ func (r *DockerBuildReconciler) reconcile(ctx context.Context, dockerBuild build
 
 	revision := source.GetArtifact().Revision
 
+	if dockerBuild.Status.LastAttemptedRevision == dockerBuild.Status.LastAppliedRevision &&
+		dockerBuild.Status.LastAppliedRevision == revision {
+		return dockerBuild, nil
+	}
+
 	// create tmp dir
 	tmpDir, err := os.MkdirTemp("", dockerBuild.Name)
 	if err != nil {
@@ -248,6 +255,25 @@ func (r *DockerBuildReconciler) reconcile(ctx context.Context, dockerBuild build
 		), err
 	}
 
+	if dockerBuild.Spec.BuildMode == buildv1alpha1.BuildModeBuildPush {
+		err = r.push(ctx, cli, revision, &dockerBuild)
+		if err != nil {
+			return buildv1alpha1.DockerBuildNotReady(
+				dockerBuild,
+				revision,
+				buildv1alpha1.BuildFailedReason,
+				err.Error(),
+			), err
+		}
+
+		return buildv1alpha1.DockerBuildReady(
+			dockerBuild,
+			revision,
+			meta.ReconciliationSucceededReason,
+			fmt.Sprintf("Applied revision: %s", revision),
+		), err
+	}
+
 	return buildv1alpha1.DockerBuildReady(
 		dockerBuild,
 		revision,
@@ -288,6 +314,52 @@ func (r *DockerBuildReconciler) build(ctx context.Context, cli *dockerclient.Cli
 }
 
 func (r *DockerBuildReconciler) push(ctx context.Context, cli *dockerclient.Client, revision string, dockerBuild *buildv1alpha1.DockerBuild) error {
+	if dockerBuild.Spec.ContainerRegistry.AuthConfigRef == nil || dockerBuild.Spec.ContainerRegistry.AuthConfigRef.Name == "" || dockerBuild.Spec.ContainerRegistry.AuthConfigRef.Namespace == "" {
+		return fmt.Errorf("authConfigRef.name or authConfigRef.namespace is not defined, failed to push")
+	}
+	authSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      dockerBuild.Spec.ContainerRegistry.AuthConfigRef.Name,
+			Namespace: dockerBuild.Spec.ContainerRegistry.AuthConfigRef.Namespace,
+		},
+	}
+
+	if err := r.Get(ctx, client.ObjectKeyFromObject(authSecret), authSecret); err != nil {
+		return fmt.Errorf("failed to get authentication configuration secret: %s", err.Error())
+	}
+
+	if authSecret.Data["Username"] == nil || authSecret.Data["Password"] == nil || authSecret.Data["ServerAddress"] == nil {
+		return fmt.Errorf("authentication configuration secret data does not contain one of these values: 'Username', 'Password', 'ServerAddress'")
+	}
+	authConfig := dockertypes.AuthConfig{
+		Username:      string(authSecret.Data["Username"]),
+		Password:      string(authSecret.Data["Password"]),
+		ServerAddress: string(authSecret.Data["ServerAddress"]),
+	}
+	authConfigBytes, err := json.Marshal(authConfig)
+	if err != nil {
+		return err
+	}
+
+	authConfigEncoded := base64.URLEncoding.EncodeToString(authConfigBytes)
+
+	opts := dockertypes.ImagePushOptions{RegistryAuth: authConfigEncoded}
+	imageTag, err := getImageTag(*dockerBuild, revision)
+	if err != nil {
+		return err
+	}
+	res, err := cli.ImagePush(ctx, imageTag, opts)
+	if err != nil {
+		return err
+	}
+
+	defer res.Close()
+
+	err = logDockerResponse(ctx, res)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -324,8 +396,8 @@ func getImageTag(dockerBuild buildv1alpha1.DockerBuild, revision string) (string
 
 	switch dockerBuild.Spec.ContainerRegistry.TagStrategy {
 	case buildv1alpha1.TagStrategyCommitSHA:
-		if len(newRevision) > 7 {
-			return fmt.Sprintf("%s:%s", dockerBuild.Spec.ContainerRegistry.Repository, newRevision[0:8]), nil
+		if len(newRevision) > 13 {
+			return fmt.Sprintf("%s:%s", dockerBuild.Spec.ContainerRegistry.Repository, newRevision[0:14]), nil
 		} else {
 			return fmt.Sprintf("%s:%s", dockerBuild.Spec.ContainerRegistry.Repository, newRevision), nil
 		}
