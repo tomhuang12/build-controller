@@ -11,6 +11,12 @@ controllers installed in your cluster. Visit [https://fluxcd.io/docs/get-started
 
 ### Installation
 
+{% note %}
+
+**Note:** Running the controller locally requires docker to be running.
+
+{% endnote %}
+
 Install flux on your test cluster:
 
 ```bash
@@ -29,7 +35,7 @@ Export the local address as `SOURCE_CONTROLLER_LOCALHOST`:
 export SOURCE_CONTROLLER_LOCALHOST=localhost:8080
 ```
 
-Have docker runtime up and running on your machine.
+Run the controller locally:
 
 ```
 make install
@@ -39,7 +45,7 @@ make run
 ### Quick Start
 #### Create a dockerhub repository
 
-Create a dockerhub repository `podinfo` using your dockerhub account
+Create a dockerhub repository `build-controller-example` using your dockerhub account
 
 #### Define a Git repository source
 
